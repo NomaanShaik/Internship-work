@@ -1,0 +1,149 @@
+import java.util.Scanner;
+
+class Book {
+    private String title;
+    private String author;
+    private boolean isIssued;
+    Book(String title, String author) {
+        this.title = title;
+        this.author = author;
+        this.isIssued = false;
+    }
+    public String getTitle() {
+        return title;
+    }
+    public String getAuthor() {
+        return author;
+    }
+    public boolean getIsIssued() {
+        return isIssued;
+    }
+    public void issueBook() {
+        isIssued = true;
+    }
+    public void returnBook() {
+        isIssued = false;
+    }
+    public void showBook() {
+        System.out.println("Title: " + title);
+        System.out.println("Author: " + author);
+        System.out.println("Status: " + (isIssued ? "Issued" : "Available"));
+    }
+}
+
+class Member {
+    private String name;
+    private int id;
+    Member(String name, int id) {
+        this.name = name;
+        this.id = id;
+    }
+    public String getName() {
+        return name;
+    }
+    public int getId() {
+        return id;
+    }
+    public void showMember() {
+        System.out.println("Member Name: " + name);
+        System.out.println("Member ID: " + id);
+    }
+}
+
+public class week3Project {
+    public static void main(String[] args) {
+        Scanner sc = new Scanner(System.in);
+        Book[] books = new Book[100];
+        Member[] members = new Member[50];
+        int bookCount = 0;
+        int memberCount = 0;
+        int choice;
+        do {
+            System.out.println("1. Add Book");
+            System.out.println("2. Add Member");
+            System.out.println("3. Issue Book");
+            System.out.println("4. Return Book");
+            System.out.println("5. Show All Books");
+            System.out.println("6. Show All Members");
+            System.out.println("7. Exit");
+            System.out.print("Enter your choice: ");
+            choice = sc.nextInt();
+            sc.nextLine();
+            if (choice == 1) {
+                System.out.print("Enter book title: ");
+                String title = sc.nextLine();
+                System.out.print("Enter author name: ");
+                String author = sc.nextLine();
+                books[bookCount] = new Book(title, author);
+                bookCount++;
+                System.out.println("Book added successfully!");
+            } 
+            else if (choice == 2) {
+                System.out.print("Enter member name: ");
+                String name = sc.nextLine();
+                System.out.print("Enter member ID: ");
+                int id = sc.nextInt();
+                members[memberCount] = new Member(name, id);
+                memberCount++;
+                System.out.println("Member added successfully!");
+            } 
+            else if (choice == 3) {
+                System.out.print("Enter book title to issue: ");
+                String title = sc.nextLine();
+                boolean found = false;
+                for (int i = 0; i < bookCount; i++) {
+                    if (books[i].getTitle().equalsIgnoreCase(title)) {
+                        if (!books[i].getIsIssued()) {
+                            books[i].issueBook();
+                            System.out.println("Book issued successfully!");
+                        } else {
+                            System.out.println("This book is already issued.");
+                        }
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    System.out.println("Book not found!");
+                }
+            } 
+            else if (choice == 4) {
+                System.out.print("Enter book title to return: ");
+                String title = sc.nextLine();
+                boolean found = false;
+                for (int i = 0; i < bookCount; i++) {
+                    if (books[i].getTitle().equalsIgnoreCase(title)) {
+                        if (books[i].getIsIssued()) {
+                            books[i].returnBook();
+                            System.out.println("Book returned successfully!");
+                        } else {
+                            System.out.println("This book was not issued.");
+                        }
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    System.out.println("Book not found!");
+                }
+            } else if (choice == 5) {
+                System.out.println("\n--- List of Books ---");
+                for (int i = 0; i < bookCount; i++) {
+                    books[i].showBook();
+                }
+            } 
+            else if (choice == 6) {
+                System.out.println("\n--- List of Members ---");
+                for (int i = 0; i < memberCount; i++) {
+                    members[i].showMember();
+                }
+            } 
+            else if (choice == 7) {
+                System.out.println("Exiting program... Thank you!");
+            } 
+            else {
+                System.out.println("Invalid choice! Try again.");
+            }
+        } while (choice != 7);
+    }
+}
