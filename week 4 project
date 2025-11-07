@@ -1,0 +1,185 @@
+import java.io.*;
+import java.util.*;
+
+class Employee implements Serializable {
+    private int id;
+    private String name;
+    private String department;
+    private double salary;
+
+    public Employee(int id, String name, String department, double salary) {
+        this.id = id;
+        this.name = name;
+        this.department = department;
+        this.salary = salary;
+    }
+
+    public int getId() { return id; }
+    public String getName() { return name; }
+    public String getDepartment() { return department; }
+    public double getSalary() { return salary; }
+
+    public void setName(String name) { this.name = name; }
+    public void setDepartment(String department) { this.department = department; }
+    public void setSalary(double salary) { this.salary = salary; }
+
+    @Override
+    public String toString() {
+        return String.format("ID: %d | Name: %s | Dept: %s | Salary: %.2f", id, name, department, salary);
+    }
+}
+
+class EmployeeManager {
+    private List<Employee> employees;
+    private final String FILE_NAME = "employees.txt";
+
+    public EmployeeManager() {
+        employees = new ArrayList<>();
+        loadFromFile();
+    }
+
+    public void addEmployee(Employee emp) {
+        employees.add(emp);
+        saveToFile();
+        System.out.println("✅ Employee added successfully!");
+    }
+
+    public void viewAllEmployees() {
+        if (employees.isEmpty()) {
+            System.out.println("⚠️ No employees found.");
+        } else {
+            System.out.println("\n--- Employee List ---");
+            for (Employee e : employees) {
+                System.out.println(e);
+            }
+        }
+    }
+
+    public Employee searchById(int id) {
+        for (Employee e : employees) {
+            if (e.getId() == id) return e;
+        }
+        return null;
+    }
+
+    public void updateEmployee(int id, String newName, String newDept, double newSalary) {
+        Employee emp = searchById(id);
+        if (emp != null) {
+            emp.setName(newName);
+            emp.setDepartment(newDept);
+            emp.setSalary(newSalary);
+            saveToFile();
+            System.out.println("✅ Employee updated successfully!");
+        } else {
+            System.out.println("⚠️ Employee not found.");
+        }
+    }
+
+    public void deleteEmployee(int id) {
+        Employee emp = searchById(id);
+        if (emp != null) {
+            employees.remove(emp);
+            saveToFile();
+            System.out.println("🗑️ Employee deleted successfully!");
+        } else {
+            System.out.println("⚠️ Employee not found.");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void saveToFile() {
+        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(FILE_NAME))) {
+            oos.writeObject(employees);
+        } catch (IOException e) {
+            System.out.println("Error saving data: " + e.getMessage());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void loadFromFile() {
+        File file = new File(FILE_NAME);
+        if (file.exists()) {
+            try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(file))) {
+                employees = (ArrayList<Employee>) ois.readObject();
+            } catch (Exception e) {
+                System.out.println("Error loading data: " + e.getMessage());
+            }
+        }
+    }
+}
+
+public class week4Project {
+    public static void main(String[] args) {
+        Scanner sc = new Scanner(System.in);
+        EmployeeManager manager = new EmployeeManager();
+        int choice;
+
+        do {
+            System.out.println("\n===== Employee Management System =====");
+            System.out.println("1. Add Employee");
+            System.out.println("2. View All Employees");
+            System.out.println("3. Search Employee by ID");
+            System.out.println("4. Update Employee");
+            System.out.println("5. Delete Employee");
+            System.out.println("6. Exit");
+            System.out.print("Enter your choice: ");
+            choice = sc.nextInt();
+            sc.nextLine();
+
+            switch (choice) {
+                case 1:
+                    System.out.print("Enter ID: ");
+                    int id = sc.nextInt();
+                    sc.nextLine();
+                    System.out.print("Enter Name: ");
+                    String name = sc.nextLine();
+                    System.out.print("Enter Department: ");
+                    String dept = sc.nextLine();
+                    System.out.print("Enter Salary: ");
+                    double sal = sc.nextDouble();
+                    manager.addEmployee(new Employee(id, name, dept, sal));
+                    break;
+
+                case 2:
+                    manager.viewAllEmployees();
+                    break;
+
+                case 3:
+                    System.out.print("Enter Employee ID: ");
+                    int searchId = sc.nextInt();
+                    Employee found = manager.searchById(searchId);
+                    if (found != null) System.out.println(found);
+                    else System.out.println("⚠️ Employee not found.");
+                    break;
+
+                case 4:
+                    System.out.print("Enter Employee ID to update: ");
+                    int uid = sc.nextInt();
+                    sc.nextLine();
+                    System.out.print("Enter New Name: ");
+                    String newName = sc.nextLine();
+                    System.out.print("Enter New Department: ");
+                    String newDept = sc.nextLine();
+                    System.out.print("Enter New Salary: ");
+                    double newSal = sc.nextDouble();
+                    manager.updateEmployee(uid, newName, newDept, newSal);
+                    break;
+
+                case 5:
+                    System.out.print("Enter Employee ID to delete: ");
+                    int did = sc.nextInt();
+                    manager.deleteEmployee(did);
+                    break;
+
+                case 6:
+                    System.out.println("💾 Exiting... Data saved successfully.");
+                    break;
+
+                default:
+                    System.out.println("⚠️ Invalid choice! Try again.");
+            }
+        } while (choice != 6);
+
+        sc.close();
+    }
+}
