@@ -1,0 +1,384 @@
+import java.util.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.stream.Collectors;
+
+public class week6Project {
+
+    private static final Logger LOG = Logger.getLogger(week6Project.class.getName());
+
+    public static final class Item {
+        private final int id;
+        private String name;
+        private String category;
+        private double price;
+        private int quantity;
+        private final Date createdAt;
+
+        public Item(int id, String name, String category, double price, int quantity) {
+            validateName(name);
+            validateCategory(category);
+            validateNonNegative(price, "price");
+            validateNonNegative(quantity, "quantity");
+
+            this.id = id;
+            this.name = name.trim();
+            this.category = category.trim();
+            this.price = price;
+            this.quantity = quantity;
+            this.createdAt = new Date();
+        }
+
+        public int getId() { return id; }
+        public String getName() { return name; }
+        public String getCategory() { return category; }
+        public double getPrice() { return price; }
+        public int getQuantity() { return quantity; }
+        public Date getCreatedAt() { return new Date(createdAt.getTime()); }
+
+        public void setName(String name) { validateName(name); this.name = name.trim(); }
+        public void setCategory(String category) { validateCategory(category); this.category = category.trim(); }
+        public void setPrice(double price) { validateNonNegative(price, "price"); this.price = price; }
+        public void setQuantity(int quantity) { validateNonNegative(quantity, "quantity"); this.quantity = quantity; }
+
+        @Override
+        public String toString() {
+            return String.format("ID:%d | %-30s | %-12s | ₹%8.2f | qty:%3d | %s",
+                    id, name, category, price, quantity, createdAt);
+        }
+
+        private static void validateName(String name) {
+            if (name == null || name.trim().isEmpty()) throw new IllegalArgumentException("name cannot be blank");
+        }
+        private static void validateCategory(String cat) {
+            if (cat == null || cat.trim().isEmpty()) throw new IllegalArgumentException("category cannot be blank");
+        }
+        private static void validateNonNegative(double value, String field) {
+            if (value < 0) throw new IllegalArgumentException(field + " cannot be negative");
+        }
+    }
+
+    public static final class InvertedIndex {
+        private final Map<String, Set<Integer>> tokenToIds = new HashMap<>();
+
+        private static List<String> tokenize(String text) {
+            if (text == null) return Collections.emptyList();
+            return Arrays.stream(text.toLowerCase().split("[^a-z0-9]+"))
+                    .filter(s -> !s.isBlank())
+                    .collect(Collectors.toList());
+        }
+
+        public void index(Item item) {
+            tokenize(item.getName()).forEach(t -> tokenToIds.computeIfAbsent(t, k -> new HashSet<>()).add(item.getId()));
+            tokenize(item.getCategory()).forEach(t -> tokenToIds.computeIfAbsent(t, k -> new HashSet<>()).add(item.getId()));
+        }
+
+        public void remove(Item item) {
+            for (String t : tokenize(item.getName())) removeTokenForId(t, item.getId());
+            for (String t : tokenize(item.getCategory())) removeTokenForId(t, item.getId());
+        }
+
+        private void removeTokenForId(String token, int id) {
+            Set<Integer> set = tokenToIds.get(token);
+            if (set == null) return;
+            set.remove(id);
+            if (set.isEmpty()) tokenToIds.remove(token);
+        }
+
+        public void update(Item oldItem, Item newItem) {
+            remove(oldItem);
+            index(newItem);
+        }
+
+        public Set<Integer> search(String query) {
+            List<String> tokens = tokenize(query);
+            if (tokens.isEmpty()) return Collections.emptySet();
+
+            Set<Integer> result = null;
+            for (String t : tokens) {
+                Set<Integer> ids = tokenToIds.getOrDefault(t, Collections.emptySet());
+                if (result == null) result = new HashSet<>(ids);
+                else result.retainAll(ids);
+                if (result.isEmpty()) break;
+            }
+            return result == null ? Collections.emptySet() : result;
+        }
+    }
+
+    public static final class InventoryRepository {
+        private final AtomicInteger idGen = new AtomicInteger(1);
+        private final Map<Integer, Item> items = new HashMap<>();
+        private final Map<String, List<Item>> byCategory = new HashMap<>();
+        private final TreeMap<Double, List<Item>> byPrice = new TreeMap<>();
+        private final PriorityQueue<Item> lowStock = new PriorityQueue<>(Comparator.comparingInt(Item::getQuantity));
+        private final InvertedIndex index = new InvertedIndex();
+
+        public Item add(String name, String category, double price, int qty) {
+            int id = idGen.getAndIncrement();
+            Item it = new Item(id, name, category, price, qty);
+            items.put(id, it);
+            byCategory.computeIfAbsent(it.getCategory().toLowerCase(), k -> new ArrayList<>()).add(it);
+            byPrice.computeIfAbsent(it.getPrice(), k -> new ArrayList<>()).add(it);
+            lowStock.add(it);
+            index.index(it);
+            LOG.log(Level.INFO, "Added item: {0}", it.getId());
+            return it;
+        }
+
+        public boolean update(int id, String name, String category, Double price, Integer qty) {
+            Item it = items.get(id);
+            if (it == null) return false;
+            Item old = new Item(it.getId(), it.getName(), it.getCategory(), it.getPrice(), it.getQuantity());
+            if (name != null && !name.isBlank()) it.setName(name);
+            if (category != null && !category.isBlank() && !category.equalsIgnoreCase(it.getCategory())) {
+                List<Item> oldList = byCategory.get(it.getCategory().toLowerCase());
+                if (oldList != null) oldList.remove(it);
+                byCategory.computeIfAbsent(category.toLowerCase(), k -> new ArrayList<>()).add(it);
+                it.setCategory(category);
+            }
+            if (price != null && price != it.getPrice()) {
+                List<Item> pList = byPrice.get(it.getPrice());
+                if (pList != null) pList.remove(it);
+                byPrice.computeIfAbsent(price, k -> new ArrayList<>()).add(it);
+                it.setPrice(price);
+            }
+            if (qty != null) {
+                lowStock.remove(it);
+                it.setQuantity(qty);
+                lowStock.add(it);
+            }
+            index.update(old, it);
+            LOG.log(Level.INFO, "Updated item: {0}", id);
+            return true;
+        }
+
+        public boolean remove(int id) {
+            Item it = items.remove(id);
+            if (it == null) return false;
+            List<Item> cat = byCategory.get(it.getCategory().toLowerCase()); if (cat != null) cat.remove(it);
+            List<Item> pList = byPrice.get(it.getPrice()); if (pList != null) pList.remove(it);
+            lowStock.remove(it);
+            index.remove(it);
+            LOG.log(Level.INFO, "Removed item: {0}", id);
+            return true;
+        }
+
+        public Optional<Item> findById(int id) { return Optional.ofNullable(items.get(id)); }
+
+        public List<Item> all() { return new ArrayList<>(items.values()); }
+
+        public List<Item> byCategory(String category) { return new ArrayList<>(byCategory.getOrDefault(category.toLowerCase(), Collections.emptyList())); }
+
+        public List<Item> byPriceRange(double min, double max) {
+            return byPrice.subMap(min, true, max, true).values().stream().flatMap(List::stream).collect(Collectors.toList());
+        }
+
+        public List<Item> search(String query) {
+            if (query == null || query.isBlank()) return Collections.emptyList();
+            Set<Integer> ids = index.search(query);
+            return ids.stream().map(items::get).filter(Objects::nonNull).collect(Collectors.toList());
+        }
+
+        public List<Item> lowStockItems(int threshold) {
+            return items.values().stream().filter(i -> i.getQuantity() <= threshold).sorted(Comparator.comparingInt(Item::getQuantity)).collect(Collectors.toList());
+        }
+    }
+
+    public static final class Utils {
+        public static <T> List<T> paginate(List<T> source, int page, int size) {
+            if (page < 1 || size < 1) return Collections.emptyList();
+            int from = (page - 1) * size;
+            if (from >= source.size()) return Collections.emptyList();
+            int to = Math.min(from + size, source.size());
+            return source.subList(from, to);
+        }
+
+        @SafeVarargs
+        public static <T> Comparator<T> chainComparators(Comparator<T>... comparators) {
+            Comparator<T> out = (a,b) -> 0;
+            for (Comparator<T> c : comparators) out = out.thenComparing(c);
+            return out;
+        }
+
+        public static int levenshtein(String a, String b) {
+            if (a == null) a = ""; if (b == null) b = "";
+            a = a.toLowerCase(); b = b.toLowerCase();
+            int[] prev = new int[b.length() + 1];
+            int[] cur = new int[b.length() + 1];
+            for (int j = 0; j <= b.length(); j++) prev[j] = j;
+            for (int i = 1; i <= a.length(); i++) {
+                cur[0] = i;
+                for (int j = 1; j <= b.length(); j++) {
+                    int cost = a.charAt(i-1) == b.charAt(j-1) ? 0 : 1;
+                    cur[j] = Math.min(Math.min(cur[j-1] + 1, prev[j] + 1), prev[j-1] + cost);
+                }
+                System.arraycopy(cur, 0, prev, 0, cur.length);
+            }
+            return prev[b.length()];
+        }
+    }
+
+    public static void main(String[] args) {
+        LOG.setLevel(Level.INFO);
+        InventoryRepository repo = new InventoryRepository();
+        seed(repo);
+        try (Scanner sc = new Scanner(System.in)) {
+            boolean running = true;
+            printHeader();
+            while (running) {
+                printMenu();
+                System.out.print("Choice> ");
+                String choice = sc.nextLine().trim();
+                switch (choice) {
+                    case "1" -> addItemInteractive(sc, repo);
+                    case "2" -> updateInteractive(sc, repo);
+                    case "3" -> removeInteractive(sc, repo);
+                    case "4" -> listInteractive(sc, repo);
+                    case "5" -> searchInteractive(sc, repo);
+                    case "6" -> lowStockInteractive(sc, repo);
+                    case "7" -> demoAdvanced(repo);
+                    case "0" -> { running = false; System.out.println("Bye."); }
+                    default -> System.out.println("Unknown option\n");
+                }
+            }
+        }
+    }
+
+    private static void printHeader() {
+        System.out.println("--- Inventory Management (intermediate) ---\n");
+    }
+
+    private static void printMenu() {
+        System.out.println("1) Add item");
+        System.out.println("2) Update item");
+        System.out.println("3) Remove item");
+        System.out.println("4) List (sort & paginate)");
+        System.out.println("5) Search (text + fuzzy)");
+        System.out.println("6) Low stock report");
+        System.out.println("7) Demo: multi-criteria sort + fuzzy");
+        System.out.println("0) Exit");
+    }
+
+    private static void addItemInteractive(Scanner sc, InventoryRepository repo) {
+        try {
+            System.out.print("Name: "); String name = sc.nextLine();
+            System.out.print("Category: "); String category = sc.nextLine();
+            System.out.print("Price: "); double price = Double.parseDouble(sc.nextLine());
+            System.out.print("Qty: "); int qty = Integer.parseInt(sc.nextLine());
+            Item it = repo.add(name, category, price, qty);
+            System.out.println("Added -> " + it);
+        } catch (Exception ex) {
+            System.out.println("Failed to add item: " + ex.getMessage());
+        }
+    }
+
+    private static void updateInteractive(Scanner sc, InventoryRepository repo) {
+        try {
+            System.out.print("ID: "); int id = Integer.parseInt(sc.nextLine());
+            System.out.print("New name (blank skip): "); String name = sc.nextLine();
+            System.out.print("New category (blank skip): "); String category = sc.nextLine();
+            System.out.print("New price (blank skip): "); String ps = sc.nextLine();
+            System.out.print("New qty (blank skip): "); String qs = sc.nextLine();
+            Double price = ps.isBlank() ? null : Double.parseDouble(ps);
+            Integer qty = qs.isBlank() ? null : Integer.parseInt(qs);
+            boolean ok = repo.update(id, name.isBlank() ? null : name, category.isBlank() ? null : category, price, qty);
+            System.out.println(ok ? "Updated." : "Item not found.");
+        } catch (Exception ex) {
+            System.out.println("Failed to update: " + ex.getMessage());
+        }
+    }
+
+    private static void removeInteractive(Scanner sc, InventoryRepository repo) {
+        try {
+            System.out.print("ID: "); int id = Integer.parseInt(sc.nextLine());
+            boolean ok = repo.remove(id);
+            System.out.println(ok ? "Removed." : "Not found.");
+        } catch (Exception ex) {
+            System.out.println("Failed to remove: " + ex.getMessage());
+        }
+    }
+
+    private static void listInteractive(Scanner sc, InventoryRepository repo) {
+        List<Item> source = repo.all();
+        System.out.println("Sort by: 1)Name 2)Price 3)Qty 4)Category 5)CreatedAt");
+        System.out.print("Choice: "); String c = sc.nextLine().trim();
+        Comparator<Item> cmp;
+        switch (c) {
+            case "1" -> cmp = Comparator.comparing(Item::getName, String.CASE_INSENSITIVE_ORDER);
+            case "2" -> cmp = Comparator.comparingDouble(Item::getPrice);
+            case "3" -> cmp = Comparator.comparingInt(Item::getQuantity);
+            case "4" -> cmp = Comparator.comparing(Item::getCategory, String.CASE_INSENSITIVE_ORDER);
+            case "5" -> cmp = Comparator.comparing(Item::getCreatedAt);
+            default -> cmp = Comparator.comparingInt(Item::getId);
+        }
+        System.out.print("Ascending? (y/n): "); boolean asc = sc.nextLine().trim().equalsIgnoreCase("y");
+        List<Item> sorted = source.stream().sorted(asc ? cmp : cmp.reversed()).collect(Collectors.toList());
+        System.out.print("Page size: "); int size = Integer.parseInt(sc.nextLine());
+        int page = 1;
+        while (true) {
+            List<Item> pageItems = Utils.paginate(sorted, page, size);
+            if (pageItems.isEmpty()) break;
+            System.out.println("-- Page " + page + " --");
+            pageItems.forEach(System.out::println);
+            System.out.print("(n)ext, (p)rev, (q)uit: ");
+            String cmd = sc.nextLine().trim().toLowerCase();
+            if (cmd.equals("n")) page++; else if (cmd.equals("p") && page>1) page--; else break;
+        }
+    }
+
+    private static void searchInteractive(Scanner sc, InventoryRepository repo) {
+        System.out.print("Text search (blank to skip): "); String q = sc.nextLine();
+        System.out.print("Fuzzy? (y/n): "); boolean fuzzy = sc.nextLine().trim().equalsIgnoreCase("y");
+        List<Item> results = new ArrayList<>();
+        if (!q.isBlank()) {
+            results.addAll(repo.search(q));
+            if (fuzzy && results.isEmpty()) {
+                for (Item it : repo.all()) {
+                    int dist = Utils.levenshtein(q, it.getName());
+                    if (dist <= Math.max(1, q.length()/4)) results.add(it);
+                }
+            }
+        } else {
+            results = repo.all();
+        }
+        if (results.isEmpty()) System.out.println("No results.");
+        else results.forEach(System.out::println);
+    }
+
+    private static void lowStockInteractive(Scanner sc, InventoryRepository repo) {
+        try {
+            System.out.print("Threshold: "); int t = Integer.parseInt(sc.nextLine());
+            List<Item> low = repo.lowStockItems(t);
+            if (low.isEmpty()) System.out.println("Nothing low."); else low.forEach(System.out::println);
+        } catch (Exception ex) { System.out.println("Invalid input."); }
+    }
+
+    private static void demoAdvanced(InventoryRepository repo) {
+        System.out.println("Demo: Electronics priced <= 80000, sort by qty asc then price desc, top 5");
+        List<Item> candidates = repo.byCategory("Electronics").stream().filter(i -> i.getPrice() <= 80000).collect(Collectors.toList());
+        Comparator<Item> cmp = Utils.chainComparators(Comparator.comparingInt(Item::getQuantity), Comparator.comparingDouble(Item::getPrice).reversed());
+        candidates.stream().sorted(cmp).limit(5).forEach(System.out::println);
+
+        System.out.println("\nDemo fuzzy search: 'office chr' (typo)");
+        List<Item> fuzzy = new ArrayList<>();
+        String q = "office chr";
+        for (Item it : repo.all()) {
+            if (Utils.levenshtein(q, it.getName()) <= 6) fuzzy.add(it);
+        }
+        fuzzy.forEach(System.out::println);
+    }
+
+    private static void seed(InventoryRepository repo) {
+        repo.add("Apple iPhone 14", "Electronics", 69999.0, 15);
+        repo.add("Samsung Galaxy S23", "Electronics", 59999.0, 8);
+        repo.add("Sony WH-1000XM5 Headphones", "Electronics", 24999.0, 25);
+        repo.add("Levi's 501 Jeans", "Clothing", 2999.0, 40);
+        repo.add("The Alchemist", "Books", 249.0, 100);
+        repo.add("Wooden Dining Table", "Furniture", 15999.0, 5);
+        repo.add("Dell XPS 15", "Electronics", 129999.0, 4);
+        repo.add("Puma Running Shoes", "Clothing", 4599.0, 30);
+        repo.add("Introduction to Algorithms", "Books", 3499.0, 6);
+        repo.add("Office Chair Ergonomic", "Furniture", 7999.0, 2);
+    }
+}
