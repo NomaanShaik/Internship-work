@@ -1,0 +1,223 @@
+import java.io.*;
+import java.nio.file.*;
+import java.text.SimpleDateFormat;
+import java.util.*;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
+
+public class week7Project {
+
+    public static final class VersionMeta implements Serializable {
+        private static final long serialVersionUID = 1L;
+        public final int version;
+        public final long timestamp;
+        public final String filename;
+        public final String comment;
+
+        public VersionMeta(int version, long timestamp, String filename, String comment) {
+            this.version = version;
+            this.timestamp = timestamp;
+            this.filename = filename;
+            this.comment = comment;
+        }
+
+        @Override
+        public String toString() {
+            Date d = new Date(timestamp);
+            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+            return String.format("v%d | %s | %s | %s", version, sdf.format(d), filename,
+                    (comment == null ? "-" : comment));
+        }
+    }
+
+    public static class BackupManager {
+
+        private final Path baseDir;
+        private final boolean compress;
+        private final String metaFileName = "versions.meta";
+
+        public BackupManager(Path baseDir, boolean compress) throws IOException {
+            this.baseDir = baseDir;
+            this.compress = compress;
+            if (!Files.exists(baseDir)) Files.createDirectories(baseDir);
+        }
+
+        public VersionMeta backup(String key, Serializable object, String comment) throws IOException {
+            Path keyDir = baseDir.resolve(sanitize(key));
+            if (!Files.exists(keyDir)) Files.createDirectories(keyDir);
+
+            List<VersionMeta> metaList = readMetaList(keyDir);
+            int nextVersion = metaList.stream().mapToInt(m -> m.version).max().orElse(0) + 1;
+            long ts = System.currentTimeMillis();
+            String tsStr = new SimpleDateFormat("yyyyMMddHHmmss").format(new Date(ts));
+            String ext = compress ? ".ser.gz" : ".ser";
+            String filename = String.format("%03d-%s%s", nextVersion, tsStr, ext);
+            Path outFile = keyDir.resolve(filename);
+
+            try (OutputStream fos = Files.newOutputStream(outFile);
+                 OutputStream bos = compress ? new GZIPOutputStream(fos) : fos;
+                 ObjectOutputStream oos = new ObjectOutputStream(bos)) {
+                oos.writeObject(object);
+            }
+
+            VersionMeta meta = new VersionMeta(nextVersion, ts, filename, comment);
+            metaList.add(meta);
+            writeMetaList(keyDir, metaList);
+            return meta;
+        }
+
+        public List<VersionMeta> listVersions(String key) throws IOException {
+            Path keyDir = baseDir.resolve(sanitize(key));
+            if (!Files.exists(keyDir)) return Collections.emptyList();
+            return Collections.unmodifiableList(readMetaList(keyDir));
+        }
+
+        public Object restore(String key, int version) throws IOException, ClassNotFoundException {
+            Path keyDir = baseDir.resolve(sanitize(key));
+            List<VersionMeta> metaList = readMetaList(keyDir);
+            Optional<VersionMeta> metaOpt = metaList.stream().filter(m -> m.version == version).findFirst();
+            if (metaOpt.isEmpty()) throw new FileNotFoundException();
+            return readObjectFromFile(keyDir.resolve(metaOpt.get().filename));
+        }
+
+        public Object restoreLatest(String key) throws IOException, ClassNotFoundException {
+            Path keyDir = baseDir.resolve(sanitize(key));
+            List<VersionMeta> metaList = readMetaList(keyDir);
+            if (metaList.isEmpty()) throw new FileNotFoundException();
+            VersionMeta last = metaList.get(metaList.size() - 1);
+            return readObjectFromFile(keyDir.resolve(last.filename));
+        }
+
+        public boolean deleteVersion(String key, int version) throws IOException {
+            Path keyDir = baseDir.resolve(sanitize(key));
+            if (!Files.exists(keyDir)) return false;
+            List<VersionMeta> metaList = readMetaList(keyDir);
+            Iterator<VersionMeta> it = metaList.iterator();
+            boolean removed = false;
+            while (it.hasNext()) {
+                VersionMeta m = it.next();
+                if (m.version == version) {
+                    Files.deleteIfExists(keyDir.resolve(m.filename));
+                    it.remove();
+                    removed = true;
+                    break;
+                }
+            }
+            if (removed) writeMetaList(keyDir, metaList);
+            return removed;
+        }
+
+        public int pruneKeepLatest(String key, int keep) throws IOException {
+            Path keyDir = baseDir.resolve(sanitize(key));
+            if (!Files.exists(keyDir)) return 0;
+            List<VersionMeta> metaList = readMetaList(keyDir);
+            if (metaList.size() <= keep) return 0;
+            int toDelete = metaList.size() - keep;
+            List<VersionMeta> removed = new ArrayList<>(metaList.subList(0, toDelete));
+            for (VersionMeta m : removed) Files.deleteIfExists(keyDir.resolve(m.filename));
+            List<VersionMeta> kept = new ArrayList<>(metaList.subList(toDelete, metaList.size()));
+            writeMetaList(keyDir, kept);
+            return removed.size();
+        }
+
+        private Object readObjectFromFile(Path file) throws IOException, ClassNotFoundException {
+            try (InputStream fis = Files.newInputStream(file);
+                 InputStream bis = file.toString().endsWith(".gz") ? new GZIPInputStream(fis) : fis;
+                 ObjectInputStream ois = new ObjectInputStream(bis)) {
+                return ois.readObject();
+            }
+        }
+
+        @SuppressWarnings("unchecked")
+        private List<VersionMeta> readMetaList(Path keyDir) throws IOException {
+            Path meta = keyDir.resolve(metaFileName);
+            if (!Files.exists(meta)) return new ArrayList<>();
+            try (InputStream fis = Files.newInputStream(meta);
+                 ObjectInputStream ois = new ObjectInputStream(fis)) {
+                return (List<VersionMeta>) ois.readObject();
+            } catch (ClassNotFoundException e) {
+                throw new IOException(e);
+            }
+        }
+
+        private void writeMetaList(Path keyDir, List<VersionMeta> list) throws IOException {
+            Path meta = keyDir.resolve(metaFileName);
+            try (OutputStream fos = Files.newOutputStream(meta);
+                 ObjectOutputStream oos = new ObjectOutputStream(fos)) {
+                oos.writeObject(new ArrayList<>(list));
+            }
+        }
+
+        private String sanitize(String key) {
+            return key.replaceAll("[^a-zA-Z0-9._-]", "_");
+        }
+    }
+
+    public static void main(String[] args) throws Exception {
+        Path base = Paths.get("backups");
+        BackupManager manager = new BackupManager(base, true);
+        Scanner sc = new Scanner(System.in);
+        boolean run = true;
+        System.out.println("Commands: backup, list, restore, restore-latest, delete, prune, exit");
+
+        while (run) {
+            System.out.print("> ");
+            String line = sc.nextLine().trim();
+            if (line.isEmpty()) continue;
+            String[] p = line.split("\\s+", 3);
+            String cmd = p[0];
+
+            try {
+                switch (cmd) {
+                    case "backup": {
+                        String key = p.length > 1 ? p[1] : null;
+                        String comment = p.length > 2 ? p[2] : null;
+                        if (key == null) { System.out.println("usage: backup key"); break; }
+                        Map<String,Object> obj = new HashMap<>();
+                        obj.put("time", System.currentTimeMillis());
+                        obj.put("msg", "Backup for " + key);
+                        VersionMeta meta = manager.backup(key, (Serializable) obj, comment);
+                        System.out.println(meta);
+                        break;
+                    }
+                    case "list": {
+                        if (p.length < 2) { System.out.println("usage: list key"); break; }
+                        List<VersionMeta> list = manager.listVersions(p[1]);
+                        if (list.isEmpty()) System.out.println("No versions");
+                        else list.forEach(System.out::println);
+                        break;
+                    }
+                    case "restore": {
+                        if (p.length < 3) { System.out.println("usage: restore key version"); break; }
+                        Object obj = manager.restore(p[1], Integer.parseInt(p[2]));
+                        System.out.println(obj);
+                        break;
+                    }
+                    case "restore-latest": {
+                        if (p.length < 2) { System.out.println("usage: restore-latest key"); break; }
+                        Object obj = manager.restoreLatest(p[1]);
+                        System.out.println(obj);
+                        break;
+                    }
+                    case "delete": {
+                        if (p.length < 3) { System.out.println("usage: delete key version"); break; }
+                        boolean ok = manager.deleteVersion(p[1], Integer.parseInt(p[2]));
+                        System.out.println(ok ? "deleted" : "not found");
+                        break;
+                    }
+                    case "prune": {
+                        if (p.length < 3) { System.out.println("usage: prune key keep"); break; }
+                        int n = manager.pruneKeepLatest(p[1], Integer.parseInt(p[2]));
+                        System.out.println("deleted: " + n);
+                        break;
+                    }
+                    case "exit": run = false; break;
+                    default: System.out.println("Unknown"); break;
+                }
+
+            } catch (Exception e) {
+                System.out.println("Error: " + e.getMessage());
+            }
+        }
+    }
+}
